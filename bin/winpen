@@ -1,0 +1,257 @@
+#!/bin/sh -e
+#L:
+#L:  MIT License
+#L:  
+#l:  Bug reports, feature requests to gemini|https://harkadev.com/oss
+#l:  Copyright (c) 2022 Harkaitz Agirre, harkaitz.aguirre@gmail.com
+#L:
+#L:  Permission is hereby granted, free of charge, to any person obtaining
+#L:  a copy of this software and associated documentation files (the
+#L:  "Software"), to deal in the Software without restriction, including
+#L:  without limitation the rights to use, copy, modify, merge, publish,
+#L:  distribute, sublicense, and/or sell copies of the Software, and to
+#L:  permit persons to whom the Software is furnished to do so, subject to
+#L:  the following conditions:
+#L:
+#L:  The above copyright notice and this permission notice shall be
+#L:  included in all copies or substantial portions of the Software.
+#L:
+#L:  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+#L:  EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+#L:  MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+#L:  NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+#L:  LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+#L:  OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+#L:  WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+##:
+#h: Usage: $0 ...
+#h:
+#h: Manage a directory in `~/.winpen` to store software for MS Windows.
+#h:
+#h: ... collect          : Download "busybox" and "ansicon".
+#h: ... prepare          : Run the initial setup of `~/.winpen`.
+#h: ... format DRIVE     : Format drive with FAT.
+#h: ... rsync  DRIVE     : Update drive with changes in `~/.winpen`.
+#h: ... upload SSH       : Upload `~/.winpen` in a windows machine.
+#h:
+#h: ... sh[32]           : Open shell with wine (32/64 bits).
+#h:
+#h: ... ins-u URL [NAME] : Download installer and save in repo.
+#h: ... ins-d FILE       : Download installer installer's dir.
+##:
+##: New-NetFirewallRule
+##:     -Name sshd -DisplayName 'OpenSSH SSH Server'
+##:     -Enabled True -Direction Inbound
+##:     -Protocol TCP -Action Allow -LocalPort 22
+. hlog
+. vrun
+. hmain
+. hfile
+. hdav
+. hformat
+. hextract
+winpen() {
+    local cmd="$1"
+    shift
+    case "${cmd}" in
+        collect)        winpen_collect                 ;;
+        prepare)        winpen_prepare                 ;;
+        format)         winpen_format "$@"             ;;
+        rsync)          winpen_rsync  "$@"             ;;
+        upload)         winpen_upload "$@"             ;;
+        system-path-32) winpen_system_path_32          ;;
+        system-path-64) winpen_system_path_64          ;;
+        sh)             winpen_sh                      ;;
+        sh32)           winpen_sh32                    ;;
+        ins-u)          winpen_installer_update   "$@" ;;
+        ins-d)          winpen_installer_download "$@" ;;
+        *)              hlog error "Invalid argument: ${cmd}"
+                        return 1;;
+    esac
+}
+winpen_show_variables() {
+    printf '%-20s : %s\n'                       \
+           WINPEN_PREFIX    "${WINPEN_PREFIX}"  \
+           WINPEN_SPATHS    "${WINPEN_SPATHS}"  \
+           WINPEN_DIR32     "${WINPEN_DIR32}"   \
+           WINPEN_DIR64     "${WINPEN_DIR64}"   \
+           WINPEN_SCRIPTS   "${WINPEN_SCRIPTS}" \
+           WINPEN_HDAV_REPO "${WINPEN_HDAV_REPO}"
+}
+winpen_calc_variables() {
+    ## Windows side.
+    WINPEN_DIR_32="winpen32"
+    WINPEN_DIR_64="winpen64"
+    WINPEN_DIR_S="SCRIPTS"
+    WINPEN_DIR_I="INSTALLERS"
+    WINPEN_SYSTEM_PATH_32='
+    C:\Program Files\7-Zip
+    C:\Program Files\WinCDEmu
+    %~dp0\'"${WINPEN_DIR_32}"'\bin
+    %~dp0\'"${WINPEN_DIR_S}"''
+    WINPEN_SYSTEM_PATH_64='
+    C:\msys64\usr\local\bin
+    C:\msys64\usr\bin
+    C:\msys64\usr\sbin
+    C:\Program Files\7-Zip
+    C:\Program Files (x86)\WinCDEmu
+    %~dp0\'"${WINPEN_DIR_64}"'\bin
+    %~dp0\'"${WINPEN_DIR_S}"''
+    ## Unix side.
+    WINPEN_HDAV_REPO="SOFTWARE/WINDOWS"
+    WINPEN_PREFIX="${WINPEN_PREFIX:-${HOME}/.winpen}"
+    WINPEN_PREFIX_32="${WINPEN_PREFIX}/${WINPEN_DIR_32}"
+    WINPEN_PREFIX_64="${WINPEN_PREFIX}/${WINPEN_DIR_64}"
+    WINPEN_INSTALLERS="${WINPEN_PREFIX}/INSTALLERS"
+    ## URLs.
+    WINPEN_URL_BUSYBOX32="https://frippery.org/files/busybox/busybox.exe"
+    WINPEN_URL_BUSYBOX64="https://frippery.org/files/busybox/busybox64.exe"
+    WINPEN_URL_ANSICON="http://adoxa.altervista.org/ansicon/dl.php?f=ansicon"
+}
+## -----------------------------------------------------------------------------
+winpen_collect() {
+    winpen_installer_update "${WINPEN_URL_BUSYBOX32}"
+    winpen_installer_update "${WINPEN_URL_BUSYBOX64}"
+    winpen_installer_update "${WINPEN_URL_ANSICON}"   "ansi189.zip"
+}
+winpen_prepare() {
+    local p32="`winpen_system_path_32`"
+    local p64="`winpen_system_path_64`"
+    local tmp="/tmp/winpen"; rm -rf "${tmp}"
+    ## Create directories.
+    hlog info "Creating ${WINPEN_PREFIX} ..."
+    mkdir -p                                   \
+          "${WINPEN_PREFIX}"                   \
+          "${WINPEN_PREFIX_32}/bin"            \
+          "${WINPEN_PREFIX_32}/share/man/man1" \
+          "${WINPEN_PREFIX_64}/bin"            \
+          "${WINPEN_PREFIX_64}/share/man/man1" \
+          "${WINPEN_INSTALLERS}"
+    ## Download zips.
+    local b32="`       winpen_installer_download "busybox.exe"                `"
+    local b64="`       winpen_installer_download "busybox64.exe"              `"
+    local ansicon="`   winpen_installer_download "ansi189.zip"                `"
+    ## Install busybox.
+    local i_b32="${WINPEN_PREFIX_32}/bin/busybox.exe"
+    local i_b64="${WINPEN_PREFIX_64}/bin/busybox.exe"
+    hlog info "I ${i_b32}"; cp "${b32}" "${i_b32}"
+    hlog info "I ${i_b64}"; cp "${b64}" "${i_b64}"
+    ## Install ansicon and wrappers.
+    local i_ansicon32="${WINPEN_PREFIX_32}/bin/ansicon.exe"
+    local i_ansicon64="${WINPEN_PREFIX_64}/bin/ansicon.exe"
+    7z x -y "${ansicon}" -o"${tmp}" >/dev/null
+    hlog info "I ${i_ansicon32}"; cp "${tmp}"/x86/* "${WINPEN_PREFIX_32}/bin"
+    hlog info "I ${i_ansicon64}"; cp "${tmp}"/x64/* "${WINPEN_PREFIX_64}/bin"
+    hlog info "C ${WINPEN_PREFIX}/sh32.bat"
+    awk 'sub("$", "\r")' <<-EOF | hfile wrapper "${WINPEN_PREFIX}/sh32.bat"
+	@echo off
+	set VERSION_CONTROL=none
+	set PATH=${p32};%PATH%
+	cd /D %~dp0
+	ansicon.exe busybox.exe sh -l %*
+	EOF
+    hlog info "C ${WINPEN_PREFIX}/sh64.bat"
+    awk 'sub("$", "\r")' <<-EOF | hfile wrapper "${WINPEN_PREFIX}/sh64.bat"
+	@echo off
+	set VERSION_CONTROL=none
+	set PATH=${p64};%PATH%
+	cd /D %~dp0
+	ansicon.exe busybox.exe sh -l %*
+	EOF
+}
+winpen_format() {
+    local disk="$1" ign=''
+    if test ! -b "${disk}"; then
+        hlog error "Please specify a block device."
+        return 1
+    fi
+    echo "Label first partition as type 7 (type enter)."
+    read ign
+    sudo cfdisk "${disk}"
+    hformat -F -f "fat32" -n "WINPEN" "${disk}1"
+}
+winpen_rsync() {
+    local disk="$1" ign=''
+    if test ! -b "${disk}"; then
+        hlog error "Please specify a block device."
+        return 1
+    fi
+    vrun sudo mkdir -p /mnt/winpen
+    sudo umount /mnt/winpen >/dev/null 2>&1 || true
+    vrun sudo mount "${disk}1" /mnt/winpen
+    vrun sudo rsync -auv --no-perms --no-owner --no-group "${WINPEN_PREFIX}/" "/mnt/winpen/"
+    vrun sudo sync
+    vrun sudo umount /mnt/winpen
+}
+winpen_upload() {
+    local host='' prefix='' pwd="`pwd`" mtime='' mtime_e=''
+    ## Get host.
+    if test -n "${1}"; then
+        host="${1}"
+        mtime="${HOME}/.winpen-hosts/${1}"
+    else
+        hlog error "Please specify a hostname."
+        return 1
+    fi
+    ## Get prefix.
+    case "`ssh "${host}" uname -m`" in
+        x86_64) dname="${WINPEN_DIR_64}" sh="sh64.bat" path="`winpen_system_path_64`";;
+        *)      dname="${WINPEN_DIR_32}" sh="sh32.bat" path="`winpen_system_path_32`";;
+    esac
+    if test -e "${mtime}"; then
+        mtime_e=y
+    fi
+    cd "${WINPEN_PREFIX}"
+    tar cf - ${mtime_e:+ --newer-mtime="${mtime}" } "${dname}" "${sh}" | ssh "${host}" "
+    echo 'Configuring .profile ...'
+    echo 'export PATH=\"${path};\${PATH}\"' > .profile
+    echo 'Extracting ...'
+    tar xvf -
+    "
+    mkdir -p "`dirname "${mtime}"`"
+    touch "${mtime}"
+    cd "${pwd}"
+}
+winpen_env() {
+    env -i \
+        ${DISPLAY:+  DISPLAY="${DISPLAY}" } \
+        ${HOME:+     HOME="${HOME}"       } \
+        ${LANG:+     LC_CTYPE="${LANG}"   } \
+        ${PATH:+     PATH="${PATH}"       } \
+        USER="`whoami`"                     \
+        "$@"
+}
+winpen_sh() {
+    winpen_env \
+        wine cmd /C start "Z:/${WINPEN_PREFIX}/sh64.bat"
+}
+winpen_sh32() {
+    winpen_env                       \
+        WINEPREFIX="${HOME}/.wine32" \
+        WINEARCH="win32"             \
+        wine cmd /C start "Z:/${WINPEN_PREFIX}/sh32.bat"
+}
+winpen_installer_update() {
+    local u="$1" b="$2"
+    if test ! -n "${b}"; then
+        b="`basename "${u}"`"
+    fi
+    local i="`hget -d "${WINPEN_INSTALLERS}" "${u}" "${b}"`"
+    if test ! -n "${i}"; then
+        return 1
+    fi
+    hdav -v -p "${WINPEN_HDAV_REPO}" -u "${b}=${i}"
+}
+winpen_installer_download() {
+    hdav -v -p "${WINPEN_HDAV_REPO}" -o "${WINPEN_INSTALLERS}" -d "$@"
+}
+## -----------------------------------------------------------------------------
+winpen_system_path_32() {
+    printf '%s' "${WINPEN_SYSTEM_PATH_32}" | sed 's/^ *//;s/ *$//;/^$/d' | tr '\n' ';'
+}
+winpen_system_path_64() {
+    printf '%s' "${WINPEN_SYSTEM_PATH_64}" | sed 's/^ *//;s/ *$//;/^$/d' | tr '\n' ';'
+}
+## -----------------------------------------------------------------------------
+winpen_calc_variables
+hmain -f "winpen" -r "rsync" winpen "$@"
