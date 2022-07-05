@@ -254,4 +254,4 @@ winpen_system_path_64() {
 }
 ## -----------------------------------------------------------------------------
 winpen_calc_variables
-hmain -f "winpen" -r "rsync" winpen "$@"
+hmain -f "winpen" -r "rsync" -r "cfdisk" -r "mount" -r "umount" winpen "$@"
