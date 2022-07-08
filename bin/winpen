@@ -31,10 +31,11 @@
 #h: ... collect          : Download "busybox" and "ansicon".
 #h: ... prepare          : Run the initial setup of `~/.winpen`.
 #h: ... format DRIVE     : Format drive with FAT.
-#h: ... rsync  DRIVE     : Update drive with changes in `~/.winpen`.
+#h: ... burn   DRIVE     : Update drive with changes in `~/.winpen`.
 #h: ... upload SSH       : Upload `~/.winpen` in a windows machine.
 #h:
 #h: ... sh[32]           : Open shell with wine (32/64 bits).
+#h: ... env[32] ...      : Execute with the correct wine.
 #h:
 #h: ... ins-u URL [NAME] : Download installer and save in repo.
 #h: ... ins-d FILE       : Download installer installer's dir.
@@ -57,12 +58,14 @@ winpen() {
         collect)        winpen_collect                 ;;
         prepare)        winpen_prepare                 ;;
         format)         winpen_format "$@"             ;;
-        rsync)          winpen_rsync  "$@"             ;;
+        burn)           winpen_burn   "$@"             ;;
         upload)         winpen_upload "$@"             ;;
         system-path-32) winpen_system_path_32          ;;
         system-path-64) winpen_system_path_64          ;;
         sh)             winpen_sh                      ;;
         sh32)           winpen_sh32                    ;;
+        env)            winpen_env    "$@"             ;;
+        env32)          winpen_env32  "$@"             ;;
         ins-u)          winpen_installer_update   "$@" ;;
         ins-d)          winpen_installer_download "$@" ;;
         *)              hlog error "Invalid argument: ${cmd}"
@@ -70,13 +73,21 @@ winpen() {
     esac
 }
 winpen_show_variables() {
-    printf '%-20s : %s\n'                       \
-           WINPEN_PREFIX    "${WINPEN_PREFIX}"  \
-           WINPEN_SPATHS    "${WINPEN_SPATHS}"  \
-           WINPEN_DIR32     "${WINPEN_DIR32}"   \
-           WINPEN_DIR64     "${WINPEN_DIR64}"   \
-           WINPEN_SCRIPTS   "${WINPEN_SCRIPTS}" \
-           WINPEN_HDAV_REPO "${WINPEN_HDAV_REPO}"
+    printf '%-20s : %s\n'                                    \
+           WINPEN_DIR_32         "${WINPEN_DIR_32}"          \
+           WINPEN_DIR_64         "${WINPEN_DIR_64}"          \
+           WINPEN_DIR_S          "${WINPEN_DIR_S}"           \
+           WINPEN_DIR_I          "${WINPEN_DIR_I}"           \
+           WINPEN_SYSTEM_PATH_32 "${WINPEN_SYSTEM_PATH_32}"  \
+           WINPEN_SYSTEM_PATH_64 "${WINPEN_SYSTEM_PATH_64}"  \
+           WINPEN_HDAV_REPO      "${WINPEN_HDAV_REPO}"       \
+           WINPEN_PREFIX         "${WINPEN_PREFIX}"          \
+           WINPEN_PREFIX_32      "${WINPEN_PREFIX_32}"       \
+           WINPEN_PREFIX_64      "${WINPEN_PREFIX_64}"       \
+           WINPEN_INSTALLERS     "${WINPEN_INSTALLERS}"      \
+           WINPEN_URL_BUSYBOX32  "${WINPEN_URL_BUSYBOX32}"   \
+           WINPEN_URL_BUSYBOX64  "${WINPEN_URL_BUSYBOX64}"   \
+           WINPEN_URL_ANSICON    "${WINPEN_URL_ANSICON}"
 }
 winpen_calc_variables() {
     ## Windows side.
@@ -170,7 +181,7 @@ winpen_format() {
     sudo cfdisk "${disk}"
     hformat -F -f "fat32" -n "WINPEN" "${disk}1"
 }
-winpen_rsync() {
+winpen_burn() {
     local disk="$1" ign=''
     if test ! -b "${disk}"; then
         hlog error "Please specify a block device."
@@ -195,14 +206,11 @@ winpen_upload() {
     fi
     ## Get prefix.
     case "`ssh "${host}" uname -m`" in
-        x86_64) dname="${WINPEN_DIR_64}" sh="sh64.bat" path="`winpen_system_path_64`";;
-        *)      dname="${WINPEN_DIR_32}" sh="sh32.bat" path="`winpen_system_path_32`";;
+        x86_64) dname="${WINPEN_DIR_64}" sh="sh64.bat" path="`winpen_system_path_64 | sed 's|%~dp0|${PWD}|g'`";;
+        *)      dname="${WINPEN_DIR_32}" sh="sh32.bat" path="`winpen_system_path_32 | sed 's|%~dp0|${PWD}|g'`";;
     esac
-    if test -e "${mtime}"; then
-        mtime_e=y
-    fi
     cd "${WINPEN_PREFIX}"
-    tar cf - ${mtime_e:+ --newer-mtime="${mtime}" } "${dname}" "${sh}" | ssh "${host}" "
+    tar cf - --exclude '*/busybox.exe' --exclude '*/emacs/*' "${dname}" "${sh}" | ssh "${host}" "
     echo 'Configuring .profile ...'
     echo 'export PATH=\"${path};\${PATH}\"' > .profile
     echo 'Extracting ...'
@@ -221,16 +229,19 @@ winpen_env() {
         USER="`whoami`"                     \
         "$@"
 }
+winpen_env32() {
+    winpen_env WINEPREFIX="${HOME}/.wine32" WINEARCH="win32" wine "$@"
+}
 winpen_sh() {
-    winpen_env \
-        wine cmd /C start "Z:/${WINPEN_PREFIX}/sh64.bat"
+    winpen_env   wine cmd /C start "Z:/${WINPEN_PREFIX}/sh64.bat"
 }
 winpen_sh32() {
-    winpen_env                       \
-        WINEPREFIX="${HOME}/.wine32" \
-        WINEARCH="win32"             \
-        wine cmd /C start "Z:/${WINPEN_PREFIX}/sh32.bat"
+    winpen_env32 wine cmd /C start "Z:/${WINPEN_PREFIX}/sh32.bat"
 }
+
+
+
+
 winpen_installer_update() {
     local u="$1" b="$2"
     if test ! -n "${b}"; then
