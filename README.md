@@ -27,10 +27,11 @@ winpen
     ... collect          : Download "busybox" and "ansicon".
     ... prepare          : Run the initial setup of `~/.winpen`.
     ... format DRIVE     : Format drive with FAT.
-    ... rsync  DRIVE     : Update drive with changes in `~/.winpen`.
+    ... burn   DRIVE     : Update drive with changes in `~/.winpen`.
     ... upload SSH       : Upload `~/.winpen` in a windows machine.
     
-    ... sh[32]           : Open shell with wine (32/64 bits).
+    ... sh[32]       : Open shell with wine (32/64 bits).
+    ... env[32]  ... : Execute with the correct wine. 
     
     ... ins-u URL [NAME] : Download installer and save in repo.
     ... ins-d FILE       : Download installer installer's dir.

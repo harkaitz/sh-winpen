@@ -34,8 +34,8 @@
 #h: ... burn   DRIVE     : Update drive with changes in `~/.winpen`.
 #h: ... upload SSH       : Upload `~/.winpen` in a windows machine.
 #h:
-#h: ... sh[32]           : Open shell with wine (32/64 bits).
-#h: ... env[32] ...      : Execute with the correct wine.
+#h: ... sh[32]       : Open shell with wine (32/64 bits).
+#h: ... env[32]  ... : Execute with the correct wine. 
 #h:
 #h: ... ins-u URL [NAME] : Download installer and save in repo.
 #h: ... ins-d FILE       : Download installer installer's dir.
